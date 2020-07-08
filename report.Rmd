@@ -1,0 +1,144 @@
+---
+title: "Prediction Assignment"
+author: "Jerome Cordjotse"
+date: "7/8/2020"
+output:
+  html_document:
+    keep_md: true
+---
+
+```{r setup, include=FALSE, cache=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# Introduction
+In this report, a Machine Learning model would be built on a dataset. The dataset is retrieved a group of enthusiasts who take measurements about themselves regularly. In this project, the goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. More information is available from the website here: <http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har>
+
+
+# Getting Data
+To begin, i will load my required packages. 
+```{r}
+library(lattice)
+library(ggplot2)
+library(dplyr)
+library(caret)
+```
+Note: You may need to install some of them.
+```{r}
+if(!file.exists('data/pml-training.csv')){
+        download.file('https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv',destfile = 'data/pml-training.csv')
+}
+if(!file.exists('data/pml-testing.csv')){
+        download.file('https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv',destfile = 'data/pml-testing.csv')
+}
+train <- read.csv('data/pml-training.csv', na.strings = c(NA,"","#DIV/0!"))
+test  <- read.csv('data/pml-testing.csv', na.strings = c(NA,"","#DIV/0!"))
+```
+
+# Exploratiory Data Analysis
+```{r}
+dim(train)
+```
+The total possible predictors are 160. We would explore to see what each field contains
+```{r}
+str(train)
+```
+
+Count number of conplete and non complete columns in terms of percentage completeness
+```{r}
+table(paste0(round(100*sapply(train, function(x) sum(!is.na(x)))/nrow(train)),'%'))
+```
+Only these 60 predictors would be considered.
+
+Let's explore the Factors since they are few
+```{r}
+sapply(train[,sapply(train, function(x) is.factor(x))], function(x) levels(x))
+```
+The user_name and *_timeastamp aren't particularly useful in prediction.
+Let's compare the new_window and classe
+```{r}
+qplot(x=new_window, color=classe, data = train)
+```
+Values are almost similar. Meaning it has near zero variance.
+There fore we ignore all factor variables.
+We can notice that two more timeframe columns exist with would be of little importanct. And also the index column
+Luckily, all the columns we don't need exist in the first six columns
+
+# Cleaning and Predictor Selection
+Before we start, the train data set would be partitioned so we can do use some for testong and validation.
+```{r}
+set.seed(2020-07-07)
+inTrain <- createDataPartition(y=train$classe,p=0.7, list=FALSE)
+train.training <- train[inTrain,]
+train.testing <- train[-inTrain,]
+
+train.new_training <-train.training[,(round(100*sapply(train.training, function(x) sum(!is.na(x)))/nrow(train.training))>10)]
+str(train.new_training)
+train.new_training_model <- train.new_training[,-c(1:6)]
+```
+
+# Model Building
+We build the model with all other predictors against classe. 
+The randorm forest method is used with 3 number of folds for cross validation
+```{r, cache=TRUE}
+fit <- train( classe ~ .,
+              data = train.new_training_model,
+              method = 'rf',
+              trControl = trainControl( number = 3,
+                                        method = 'cv',
+                                        verboseIter = FALSE
+                                        )
+              )
+```
+The importance of the predictors is shown here. We could use only the top predictors for reducing overfitting and scaling purposes.
+```{r}
+
+importance    <- varImp(fit)$importance
+predictors <- row.names(importance)
+varImportance <- data.frame(Variables = predictors, 
+                            Importance = round(importance$Overall,2))
+
+# Create a rank variable based on importance
+rankImportance <- varImportance %>%
+  mutate(Rank = paste0('#',dense_rank(desc(Importance))))
+
+# Use ggplot2 to visualize the relative importance of variables
+ggplot(rankImportance, aes(x = reorder(Variables, Importance), 
+    y = Importance, fill = Importance)) +
+  geom_bar(stat='identity') + 
+  geom_text(aes(x = Variables, y = 0.5, label = Rank),
+    hjust=0, vjust=0.55, size = 3, colour = 'red') +
+  labs(x = 'Variables') +
+  coord_flip()
+```
+
+Now we look at the out of sample error.
+```{r}
+confusionMatrix(train.testing$classe,predict(fit,train.testing))$table
+```
+The errors are low.
+Looking at the accuracy value can confirm
+```{r}
+confusionMatrix(train.testing$classe,predict(fit,train.testing))$overall[1]
+```
+
+# Final Model 
+These are models that would be used
+```{r}
+predictors[1:25]
+```
+
+```{r, cache=TRUE}
+fit <- train( as.formula( paste("classe", paste( predictors[1:25], collapse = ' + '), sep = ' ~ ')),
+              data = train,
+              method = 'rf',
+              trControl = trainControl( number = 3,
+                                        method = 'cv',
+                                        verboseIter = FALSE
+              )
+)
+predictions <- predict(fit,test)
+predictions
+```
+
+# Why you made the choices you did
+The reduced number of predictors to reduce the chances of overfitting and increase performance.
